@@ -5,8 +5,8 @@ ALL: producer consumer
 CFLAGS = -Wall $(shell pkg-config --cflags glib-2.0 rdkafka)
 LDLIBS = $(shell pkg-config --libs glib-2.0 rdkafka)
 
-producer: producer.c producer_options.c producer_options.h
-	$(CC) $(CFLAGS) producer.c producer_options.c -o $@ $(LDLIBS)
+producer: producer.c producer_options.c producer_options.h rate_pacer.c rate_pacer.h stats_logger.c stats_logger.h
+	$(CC) $(CFLAGS) producer.c producer_options.c rate_pacer.c stats_logger.c -o $@ $(LDLIBS)
 
 consumer: consumer.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
