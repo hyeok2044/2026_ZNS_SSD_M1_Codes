@@ -2,6 +2,7 @@
 #include <librdkafka/rdkafka.h>
 
 #include "common.c"
+#include "consumer_options.h"
 
 static volatile sig_atomic_t run = 1;
 
@@ -16,17 +17,23 @@ int main (int argc, char **argv) {
     rd_kafka_t *consumer;
     rd_kafka_conf_t *conf;
     rd_kafka_resp_err_t err;
+    consumer_options_t options;
     char errstr[512];
+
+    init_default_consumer_options(&options);
+    if (!parse_consumer_options(argc, argv, &options)) {
+        return 1;
+    }
 
     // Create client configuration
     conf = rd_kafka_conf_new();
 
     // User-specific properties that you must set
-    set_config(conf, "bootstrap.servers", "localhost:9092");
+    set_config(conf, "bootstrap.servers", (char *)options.bootstrap_servers);
 
     // Fixed properties
-    set_config(conf, "group.id",          "kafka-c-getting-started");
-    set_config(conf, "auto.offset.reset", "earliest");
+    set_config(conf, "group.id",          (char *)options.group_id);
+    set_config(conf, "auto.offset.reset", (char *)options.auto_offset_reset);
 
     // Create the Consumer instance.
     consumer = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
@@ -40,9 +47,8 @@ int main (int argc, char **argv) {
     conf = NULL;
 
     // Convert the list of topics to a format suitable for librdkafka.
-    const char *topic = "ext4-test";
     rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(1);
-    rd_kafka_topic_partition_list_add(subscription, topic, RD_KAFKA_PARTITION_UA);
+    rd_kafka_topic_partition_list_add(subscription, options.topic, RD_KAFKA_PARTITION_UA);
 
     // Subscribe to the list of topics.
     err = rd_kafka_subscribe(consumer, subscription);
