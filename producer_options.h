@@ -2,13 +2,15 @@
 #define PRODUCER_OPTIONS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct {
     const char *bootstrap_servers;
     const char *acks;
     const char *topic;
-    int produce_iterations;
-    int progress_interval;
+    uint64_t message_count;
+    uint64_t ops;
+    uint64_t stats_interval_us;
     size_t payload_size;
 } producer_options_t;
 

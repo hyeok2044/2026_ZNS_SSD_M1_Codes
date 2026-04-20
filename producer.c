@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <librdkafka/rdkafka.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,53 +55,156 @@ static char *create_payload(const producer_options_t *options) {
     return payload;
 }
 
-/* 진행 현황을 출력합니다.
- */
-static void log_progress(rd_kafka_t *producer,
-                               const producer_options_t *options,
-                               int count) {
-    if (count % options->progress_interval == 0) {
-        g_message("Progress: (%d/%d)", count, options->produce_iterations);
-        rd_kafka_flush(producer, 10 * 1000);
-    }
-}
-
 /* 메시지를 발행(Produce)합니다.
  */
 static rd_kafka_resp_err_t produce_message(rd_kafka_t *producer,
                                            const producer_options_t *options,
                                            const char *payload) {
-    return rd_kafka_producev(producer,
-                             RD_KAFKA_V_TOPIC(options->topic),
-                             RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
-                             RD_KAFKA_V_VALUE((void *)payload,
-                                              options->payload_size),
-                             RD_KAFKA_V_OPAQUE(NULL),
-                             RD_KAFKA_V_END);
-}
-
-/* 지정된 횟수만큼 메시지를 말행합니다.
- */
-static void produce_messages(rd_kafka_t *producer,
-                             const producer_options_t *options,
-                             const char *payload) {
-    int count = 0;
-
-    while (++count <= options->produce_iterations) {
+    while (1) {
         rd_kafka_resp_err_t err;
 
-        err = produce_message(producer, options, payload);
-        log_progress(producer, options, count);
+        err = rd_kafka_producev(producer,
+                                RD_KAFKA_V_TOPIC(options->topic),
+                                RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
+                                RD_KAFKA_V_VALUE((void *)payload,
+                                                 options->payload_size),
+                                RD_KAFKA_V_OPAQUE(NULL),
+                                RD_KAFKA_V_END);
 
+        if (err != RD_KAFKA_RESP_ERR__QUEUE_FULL) {
+            return err;
+        }
+
+        rd_kafka_poll(producer, 100);
+    }
+}
+
+static gint64 get_target_send_time_us(const producer_options_t *options,
+                                      gint64 start_time_us,
+                                      uint64_t sent_count) {
+    if (options->ops == 0) {
+        return start_time_us;
+    }
+
+    return start_time_us +
+           (gint64)((sent_count * (uint64_t)G_USEC_PER_SEC) / options->ops);
+}
+
+static gint64 wait_for_next_send_slot(rd_kafka_t *producer,
+                                      const producer_options_t *options,
+                                      gint64 start_time_us,
+                                      uint64_t sent_count) {
+    gint64 target_time_us;
+
+    if (options->ops == 0) {
+        return 0;
+    }
+
+    target_time_us = get_target_send_time_us(options, start_time_us, sent_count);
+
+    while (1) {
+        gint64 now = g_get_monotonic_time();
+        gint64 remaining_us = target_time_us - now;
+
+        if (remaining_us <= 0) {
+            return -remaining_us;
+        }
+
+        if (remaining_us >= 1000) {
+            int poll_timeout_ms = (int)MIN((remaining_us / 1000), 100);
+            rd_kafka_poll(producer, poll_timeout_ms);
+        } else {
+            rd_kafka_poll(producer, 0);
+        }
+    }
+}
+
+static void log_stats(const producer_options_t *options,
+                      uint64_t sent_count,
+                      gint64 start_time_us,
+                      gint64 interval_start_us,
+                      uint64_t interval_start_count,
+                      gint64 current_lag_us) {
+    gint64 now = g_get_monotonic_time();
+    gint64 elapsed_us = now - start_time_us;
+    gint64 interval_elapsed_us = now - interval_start_us;
+    uint64_t interval_count = sent_count - interval_start_count;
+    double average_ops = 0.0;
+    double interval_ops = 0.0;
+
+    if (elapsed_us > 0) {
+        average_ops = ((double)sent_count * G_USEC_PER_SEC) / (double)elapsed_us;
+    }
+
+    if (interval_elapsed_us > 0) {
+        interval_ops = ((double)interval_count * G_USEC_PER_SEC) /
+                       (double)interval_elapsed_us;
+    }
+
+    if (options->ops > 0) {
+        g_message("Progress: sent=%" G_GUINT64_FORMAT "/%" G_GUINT64_FORMAT
+                  " target=%" G_GUINT64_FORMAT " ops interval=%.2f msg/s avg=%.2f msg/s lag=%" G_GINT64_FORMAT "us",
+                  sent_count,
+                  options->message_count,
+                  options->ops,
+                  interval_ops,
+                  average_ops,
+                  current_lag_us);
+        return;
+    }
+
+    g_message("Progress: sent=%" G_GUINT64_FORMAT "/%" G_GUINT64_FORMAT
+              " interval=%.2f msg/s avg=%.2f msg/s",
+              sent_count,
+              options->message_count,
+              interval_ops,
+              average_ops);
+}
+
+/* 지정된 횟수만큼 메시지를 발행합니다.
+ */
+static uint64_t produce_messages(rd_kafka_t *producer,
+                                 const producer_options_t *options,
+                                 const char *payload) {
+    gint64 start_time_us = g_get_monotonic_time();
+    gint64 interval_start_us = start_time_us;
+    uint64_t interval_start_count = 0;
+    uint64_t sent_count = 0;
+    gint64 current_lag_us = 0;
+
+    while (sent_count < options->message_count) {
+        rd_kafka_resp_err_t err;
+
+        current_lag_us = wait_for_next_send_slot(producer,
+                                                 options,
+                                                 start_time_us,
+                                                 sent_count);
+
+        err = produce_message(producer, options, payload);
         if (err) {
             g_error("Failed to produce to topic %s: %s",
                     options->topic,
                     rd_kafka_err2str(err));
-            return;
+            return sent_count;
         }
 
+        sent_count++;
         rd_kafka_poll(producer, 0);
+
+        if ((g_get_monotonic_time() - interval_start_us) >=
+            (gint64)options->stats_interval_us) {
+            log_stats(options,
+                      sent_count,
+                      start_time_us,
+                      interval_start_us,
+                      interval_start_count,
+                      current_lag_us);
+            interval_start_us = g_get_monotonic_time();
+            interval_start_count = sent_count;
+        }
     }
+
+    return sent_count;
 }
 
 /* 프로그램을 종료하기 전에 내부 큐에 남아있는 메시지를 모두 Flush합니다.
@@ -118,6 +222,7 @@ int main(int argc, char **argv) {
     char *payload;
     rd_kafka_t *producer;
     producer_options_t options;
+    uint64_t sent_count;
 
     init_default_producer_options(&options);
     if (!parse_producer_options(argc, argv, &options)) {
@@ -127,11 +232,11 @@ int main(int argc, char **argv) {
     payload = create_payload(&options);
     producer = create_producer(&options);
 
-    produce_messages(producer, &options, payload);
+    sent_count = produce_messages(producer, &options, payload);
     flush_producer(producer);
 
-    g_message("%d events were produced to topic %s.",
-              options.produce_iterations,
+    g_message("%" G_GUINT64_FORMAT " messages were produced to topic %s.",
+              sent_count,
               options.topic);
 
     free(payload);
