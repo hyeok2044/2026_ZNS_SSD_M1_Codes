@@ -7,7 +7,7 @@
 #include <stdlib.h>
 
 static void print_usage(const char *program_name) {
-    g_printerr("Usage: %s [--payload-size BYTES] [--topic TOPIC]\n",
+    g_printerr("Usage: %s [--bootstrap-servers HOSTS] [--payload-size BYTES] [--topic TOPIC]\n",
                program_name);
 }
 
@@ -37,6 +37,7 @@ void init_default_producer_options(producer_options_t *options) {
 
 int parse_producer_options(int argc, char **argv, producer_options_t *options) {
     static struct option long_options[] = {
+        {"bootstrap-servers", required_argument, NULL, 'b'},
         {"payload-size", required_argument, NULL, 'p'},
         {"topic", required_argument, NULL, 't'},
         {0, 0, 0, 0},
@@ -48,6 +49,14 @@ int parse_producer_options(int argc, char **argv, producer_options_t *options) {
 
     while ((opt = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {
         switch (opt) {
+            case 'b':
+                if (optarg[0] == '\0') {
+                    g_printerr("Bootstrap servers must not be empty\n");
+                    print_usage(argv[0]);
+                    return 0;
+                }
+                options->bootstrap_servers = optarg;
+                break;
             case 'p':
                 if (!parse_payload_size(optarg, &options->payload_size)) {
                     g_printerr("Invalid payload size: %s\n", optarg);
