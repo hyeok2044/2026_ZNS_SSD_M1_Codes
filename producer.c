@@ -67,15 +67,14 @@ int main (int argc, char **argv) {
                                 RD_KAFKA_V_OPAQUE(NULL),
                                 RD_KAFKA_V_END);
 
-	if(cnt%100000 == 0){
-
-            g_message("Progress: (%d/%d)", cnt, 100000000);
+	if(cnt%100000 == 0) {
+        g_message("Progress: (%d/%d)", cnt, 100000000);
 	    rd_kafka_flush(producer, 10 * 1000);
 	}
 
-        if (err) {
-            g_error("Failed to produce to topic %s: %s", topic, rd_kafka_err2str(err));
-            return 1;
+    if (err) {
+        g_error("Failed to produce to topic %s: %s", topic, rd_kafka_err2str(err));
+        return 1;
 	}
 //        else {
 //            g_message("Produced event to topic %s: value = %12s", topic, value);
