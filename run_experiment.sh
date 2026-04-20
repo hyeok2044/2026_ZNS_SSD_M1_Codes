@@ -4,7 +4,7 @@ set -euo pipefail
 BOOTSTRAP=${BOOTSTRAP:-127.0.0.1:9092}
 TOPIC=${TOPIC:-ext4-test}
 OPS=${OPS:-200000}
-MSG=${MSG:-1000000}
+TOTAL_BYTES=${TOTAL_BYTES:-$((50 * 1024 * 1024 * 1024))}   # 50 GiB per payload
 KAFKA_BIN=${KAFKA_BIN:-$HOME/kafka_2.13-4.2.0/bin}
 GRACE=${GRACE:-10}
 
@@ -12,6 +12,7 @@ OUT="$(date +%Y%m%d_%H%M%S)_exp_result"
 mkdir -p "$OUT"
 
 for PAYLOAD in 1024 10240 102400 1024000; do
+    MSG=$((TOTAL_BYTES / PAYLOAD))
     DIR="$OUT/$PAYLOAD"
     mkdir -p "$DIR"
     echo "=== payload=$PAYLOAD msg_count=$MSG ==="
