@@ -1,8 +1,10 @@
 #include <glib.h>
 #include <librdkafka/rdkafka.h>
+#include <stdint.h>
 
 #include "common.c"
 #include "consumer_options.h"
+#include "stats_logger.h"
 
 static volatile sig_atomic_t run = 1;
 
@@ -64,13 +66,16 @@ int main (int argc, char **argv) {
     // Install a signal handler for clean shutdown.
     signal(SIGINT, stop);
 
+    stats_logger_t stats;
+    stats_logger_init(&stats, "received", 0, 0, G_USEC_PER_SEC);
+    uint64_t received = 0;
+
     // Start polling for messages.
     while (run) {
         rd_kafka_message_t *consumer_message;
 
         consumer_message = rd_kafka_consumer_poll(consumer, 500);
         if (!consumer_message) {
-            g_message("Waiting...");
             continue;
         }
 
@@ -84,12 +89,8 @@ int main (int argc, char **argv) {
                 return 1;
             }
         } else {
-            g_message("Consumed event from topic %s: key = %.*s value = %s",
-                      rd_kafka_topic_name(consumer_message->rkt),
-                      (int)consumer_message->key_len,
-                      (char *)consumer_message->key,
-                      (char *)consumer_message->payload
-                      );
+            received++;
+            stats_logger_maybe_log(&stats, received, 0);
         }
 
         // Free the message when we're done.
