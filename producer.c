@@ -4,20 +4,10 @@
 #include <string.h>
 
 #include "common.c"
-
-typedef struct {
-    const char *bootstrap_servers;
-    const char *acks;
-    const char *topic;
-    int message_count;
-    int produce_iterations;
-    int progress_interval;
-    size_t payload_size;
-} producer_options_t;
+#include "producer_options.h"
 
 /* Optional per-message delivery callback (triggered by poll() or flush())
- * when a message has been successfully delivered or permanently
- * failed delivery (after retries).
+ * 메시지 발송이 성공하거나 (재시도 후에도) 실패하였을 때 호출됩니다.
  */
 static void dr_msg_cb(rd_kafka_t *kafka_handle,
                       const rd_kafka_message_t *rkmessage,
@@ -27,16 +17,8 @@ static void dr_msg_cb(rd_kafka_t *kafka_handle,
     }
 }
 
-static void init_default_options(producer_options_t *options) {
-    options->bootstrap_servers = "localhost:9092";
-    options->acks = "all";
-    options->topic = "ext4-test";
-    options->message_count = 10;
-    options->produce_iterations = 100000000;
-    options->progress_interval = 100000;
-    options->payload_size = 1000;
-}
-
+/* Kafka Server와 연결을 맺고 Producer를 반환합니다.
+ */
 static rd_kafka_t *create_producer(const producer_options_t *options) {
     rd_kafka_t *producer;
     rd_kafka_conf_t *conf;
@@ -57,8 +39,10 @@ static rd_kafka_t *create_producer(const producer_options_t *options) {
     return producer;
 }
 
+/* Payload로 사용될 문자열 배열을 생성합니다.
+ */
 static char *create_payload(const producer_options_t *options) {
-    char *payload = (char *)malloc(options->payload_size);
+    char *payload = (char *)malloc(options->payload_size + 1);
 
     if (!payload) {
         g_error("Failed to allocate payload");
@@ -66,10 +50,23 @@ static char *create_payload(const producer_options_t *options) {
     }
 
     memset(payload, 'A', options->payload_size);
-    payload[options->payload_size - 1] = '\0';
+    payload[options->payload_size] = '\0';
     return payload;
 }
 
+/* 진행 현황을 출력합니다.
+ */
+static void log_progress(rd_kafka_t *producer,
+                               const producer_options_t *options,
+                               int count) {
+    if (count % options->progress_interval == 0) {
+        g_message("Progress: (%d/%d)", count, options->produce_iterations);
+        rd_kafka_flush(producer, 10 * 1000);
+    }
+}
+
+/* 메시지를 발행(Produce)합니다.
+ */
 static rd_kafka_resp_err_t produce_message(rd_kafka_t *producer,
                                            const producer_options_t *options,
                                            const char *payload) {
@@ -82,15 +79,8 @@ static rd_kafka_resp_err_t produce_message(rd_kafka_t *producer,
                              RD_KAFKA_V_END);
 }
 
-static void maybe_log_progress(rd_kafka_t *producer,
-                               const producer_options_t *options,
-                               int count) {
-    if (count % options->progress_interval == 0) {
-        g_message("Progress: (%d/%d)", count, options->produce_iterations);
-        rd_kafka_flush(producer, 10 * 1000);
-    }
-}
-
+/* 지정된 횟수만큼 메시지를 말행합니다.
+ */
 static void produce_messages(rd_kafka_t *producer,
                              const producer_options_t *options,
                              const char *payload) {
@@ -100,7 +90,7 @@ static void produce_messages(rd_kafka_t *producer,
         rd_kafka_resp_err_t err;
 
         err = produce_message(producer, options, payload);
-        maybe_log_progress(producer, options, count);
+        log_progress(producer, options, count);
 
         if (err) {
             g_error("Failed to produce to topic %s: %s",
@@ -113,6 +103,8 @@ static void produce_messages(rd_kafka_t *producer,
     }
 }
 
+/* 프로그램을 종료하기 전에 내부 큐에 남아있는 메시지를 모두 Flush합니다.
+ */
 static void flush_producer(rd_kafka_t *producer) {
     g_message("Flushing final messages..");
     rd_kafka_flush(producer, 10 * 1000);
@@ -127,7 +119,10 @@ int main(int argc, char **argv) {
     rd_kafka_t *producer;
     producer_options_t options;
 
-    init_default_options(&options);
+    init_default_producer_options(&options);
+    if (!parse_producer_options(argc, argv, &options)) {
+        return 1;
+    }
 
     payload = create_payload(&options);
     producer = create_producer(&options);
@@ -136,7 +131,7 @@ int main(int argc, char **argv) {
     flush_producer(producer);
 
     g_message("%d events were produced to topic %s.",
-              options.message_count,
+              options.produce_iterations,
               options.topic);
 
     free(payload);
