@@ -4,15 +4,21 @@ set -euo pipefail
 log(){ echo "[$(date '+%Y-%m-%d %H:%M:%S.%3N')] $@"; }
 # 0. inputs and initialization
 
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <fs-name> <kafka-log-dir>"
-    echo "Example: $0 ext4 /mnt/ext4/kafka-logs"
-    echo "Example: $0 f2fs /mnt/f2fs/kafka-logs"
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <fs-name> <kafka-log-dir> <scenario>"
+    echo "Example: $0 ext4 /mnt/ext4/kafka-logs producer_only"
+    echo "Example: $0 ext4 /mnt/ext4/kafka-logs producer_consumer"
     exit 1
 fi
 
 FS_NAME="$1"
 LOG_DIR="$2"
+SCENARIO="$3"
+
+if [ "$SCENARIO" != "producer_only" ] && [ "$SCENARIO" != "producer_consumer" ]; then
+    echo "Invalid scenario: $SCENARIO"
+    exit 1
+fi
 
 BOOTSTRAP=${BOOTSTRAP:-127.0.0.1:9092}
 TOPIC=${TOPIC:-${FS_NAME}-test}
@@ -121,24 +127,35 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     VM_PID=$!
     echo "  - vmstat pid: $VM_PID"
 
-    # 4. Consumer experiment
+    # 4. Consumer-Producer experiment
+    CO_PID=""
+
+    if [ "$SCENARIO" = "producer_consumer" ]; then
+        log "[3/6] Starting consumer"
+
+#        ./consumer \
+#            --bootstrap-servers "$BOOTSTRAP" \
+#            --topic "$TOPIC" \
+#            --scenario "$SCENARIO" \
+#            --payload-size "$PAYLOAD" \
+#            > "$DIR/consumer.log" 2>&1 &
+#        CO_PID=$!
+
+        echo "  - using consumer stub: sleep 120"
+        sleep 120 &
+        CO_PID=$!
+        echo "  - consumer pid: $CO_PID"
+
+        echo "  - waiting 3 sec before producer..."
+        sleep 3
+    else
+        log "[3/6] Skip consumer for producer_only"
+    fi
     log "[3/6] Starting consumer"
 
-#    ./consumer \
-#        --bootstrap-servers "$BOOTSTRAP" \
-#        --topic "$TOPIC" \
-#        > "$DIR/consumer.log" 2>&1 &
-#    CO_PID=$!
 
-    echo "  - using consumer stub: sleep 120"
-    sleep 120 &
-    CO_PID=$!
-    echo "  - consumer pid: $CO_PID"
 
-    echo "  - waiting 3 sec before producer..."
-    sleep 3
-
-    # 5. Producer experiment / Grace time
+    # 5. Producer experiment
     log "[4/6] Starting producer"
     echo "  - payload_size=$PAYLOAD"
     echo "  - initial_mps=$INITIAL_MPS incr_mps=$INCR_MPS max_mps=$MAX_MPS"
@@ -147,6 +164,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
 #    ./producer \
 #        --bootstrap-servers "$BOOTSTRAP" \
 #        --topic "$TOPIC" \
+#        --scenario "$SCENARIO" \
 #        --payload-size "$PAYLOAD" \
 #        --initial-mps "$INITIAL_MPS" \
 #        --incr-mps "$INCR_MPS" \
@@ -164,8 +182,10 @@ for PAYLOAD in 1024 10240 102400 1024000; do
 
     # 6. Epilogue
     log "[5/6] Stopping processes"
-    echo "  - stopping consumer pid=$CO_PID"
-    kill -INT "$CO_PID" 2>/dev/null || true
+    if [ -n "$CO_PID" ]; then
+        echo "  - stopping consumer pid=$CO_PID"
+        kill -INT "$CO_PID" 2>/dev/null || true
+    fi
 
     echo "  - stopping iostat pid=$IO_PID, vmstat pid=$VM_PID"
     kill -TERM "$IO_PID" "$VM_PID" 2>/dev/null || true
