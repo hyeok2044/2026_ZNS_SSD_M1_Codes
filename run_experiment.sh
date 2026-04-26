@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+log(){ echo "[$(date '+%Y-%m-%d %H:%M:%S.%3N')] $@"; }
 # 0. inputs and initialization
 
 if [ "$#" -ne 2 ]; then
@@ -45,7 +46,7 @@ echo "iostat dev : $IOSTAT_DEV"
 echo
 
 # 0-1. Kafka initialization
-echo "Starting Kafka..."
+log "Starting Kafka..."
 "$KAFKA_BIN/kafka-server-start.sh" "$KAFKA_HOME/config/server.properties" \
     > "$OUT/kafka-server.log" 2>&1 &
 KAFKA_PID=$!
@@ -65,7 +66,7 @@ trap cleanup EXIT
 echo "Waiting for Kafka..."
 for _ in {1..30}; do
     if "$KAFKA_BIN/kafka-topics.sh" --bootstrap-server "$BOOTSTRAP" --list >/dev/null 2>&1; then
-        echo "Kafka is ready."
+        log "Kafka is ready."
         break
     fi
     sleep 1
@@ -84,10 +85,10 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "============================================================"
 
     # 2. Create Kafka Topics
-    echo "[1/6] Recreating Kafka topic: $TOPIC"
+    log "[1/6] Recreating Kafka topic: $TOPIC"
 
     echo "  - deleting topic if exists..."
-    "$KAFKA_BIN/kafka-topics.sh" \
+   "$KAFKA_BIN/kafka-topics.sh" \
         --bootstrap-server "$BOOTSTRAP" \
         --delete \
         --topic "$TOPIC" \
@@ -108,7 +109,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     sleep 10
 
     # 3. Start measurement
-    echo "[2/6] Starting system metrics"
+    log "[2/6] Starting system metrics"
     echo "  - iostat device: $IOSTAT_DEV"
     echo "  - iostat output: $DIR/iostat.json"
     iostat -dx 1 -y -t -o JSON "$IOSTAT_DEV" > "$DIR/iostat.json" &
@@ -121,7 +122,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "  - vmstat pid: $VM_PID"
 
     # 4. Consumer experiment
-    echo "[3/6] Starting consumer"
+    log "[3/6] Starting consumer"
 
 #    ./consumer \
 #        --bootstrap-servers "$BOOTSTRAP" \
@@ -138,7 +139,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     sleep 3
 
     # 5. Producer experiment / Grace time
-    echo "[4/6] Starting producer"
+    log "[4/6] Starting producer"
     echo "  - payload_size=$PAYLOAD"
     echo "  - initial_mps=$INITIAL_MPS incr_mps=$INCR_MPS max_mps=$MAX_MPS"
     echo "  - warmup_sec=$WARMUP_SEC measurement_sec=$MEASUREMENT_SEC"
@@ -162,7 +163,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     sleep "$GRACE"
 
     # 6. Epilogue
-    echo "[5/6] Stopping processes"
+    log "[5/6] Stopping processes"
     echo "  - stopping consumer pid=$CO_PID"
     kill -INT "$CO_PID" 2>/dev/null || true
 
@@ -182,16 +183,16 @@ for PAYLOAD in 1024 10240 102400 1024000; do
 
     echo "  - force killing remaining processes if any..."
     kill -KILL "$CO_PID" "$IO_PID" "$VM_PID" 2>/dev/null || true
-    wait 2>/dev/null || true
+    wait "$CO_PID" "$IO_PID" "$VM_PID" 2>/dev/null || true
 
-    echo "[6/6] Payload complete"
+    log "[6/6] Payload complete"
     echo "  - results:"
     echo "    $DIR/iostat.json"
     echo "    $DIR/vmstat.txt"
 #    echo "    $DIR/consumer.log"
 #    echo "    $DIR/producer.log"
 
-    echo "  - break time: 60 sec"
+    log "  - break time: 60 sec"
     sleep 60
 done
 
