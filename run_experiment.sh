@@ -34,7 +34,7 @@ KAFKA_BIN=${KAFKA_BIN:-$KAFKA_HOME/bin}
 IOSTAT_DEV=${IOSTAT_DEV:-nvme0n1}
 GRACE=${GRACE:-10}
 
-OUT=${OUT:-results/${FS_NAME}/$(date +%Y%m%d_%H%M%S)}
+OUT=${OUT:-results/${FS_NAME}/${SCENARIO}/$(date +%Y%m%d_%H%M%S)}
 mkdir -p "$OUT"
 
 echo "=== Experiment start ==="
