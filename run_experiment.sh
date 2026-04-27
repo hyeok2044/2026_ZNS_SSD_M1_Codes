@@ -149,9 +149,9 @@ for PAYLOAD in 1024 10240 102400 1024000; do
             --payload-size "$PAYLOAD" \
             --warmup-sec "$WARMUP_SEC" \
             --measurement-sec "$MEASUREMENT_SEC" \
-            | tee "$DIR/consumer.jsonl" &
-
+            > "$DIR/consumer.jsonl" &
         CO_PID=$!
+
         echo "  - consumer pid: $CO_PID"
 
         echo "  - waiting 3 sec before producer..."
