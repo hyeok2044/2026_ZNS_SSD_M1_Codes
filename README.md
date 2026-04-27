@@ -47,6 +47,47 @@ log.dirs=/mnt/ext4/kafka-logs
 
 `log.dirs`는 실험 대상 파일 시스템에 맞춰 매번 변경된다.
 
+### 추가: Broker 메시지 제한 관련
+
+```c
+// ~/kafka_2.13-4.2.0/config/broker.properties
+
+message.max.bytes=2097152
+replica.fetch.max.bytes=2097152
+```
+
+아래에 append
+
+```c
+// ~/kafka_2.13-4.2.0/config/producer.properties
+# Maximum size of a request in bytes.
+# Should accommodate your largest batch size plus overhead.
+# 1MB is default and suitable for most cases.
+max.request.size=1048576정
+
+max.request.size=2097152
+```
+
+아래 처럼 수정
+
+```c
+// ~/kafka_2.13-4.2.0/config/consumer.properties
+# Set soft limits to the amount of bytes per fetch request and partition.
+# Both max.partition.fetch.bytes and fetch.max.bytes limits can be exceeded when
+# the first batch in the first non-empty partition is larger than the configured
+# value to ensure that the consumer can make progress.
+# Configuring message.max.bytes (broker config) or max.message.bytes (topic config)
+# <= fetch.max.bytes prevents oversized fetch responses.
+fetch.max.bytes=52428800
+max.partition.fetch.bytes=1048576
+
+max.partition.fetch.bytes=2097152
+```
+
+아래 처럼 수정
+
+다음과 같이 바꾸어야 1MB 로드도 성공적으로 처리할 수 있다.
+
 ### Kafka storage format
 
 ```bash
