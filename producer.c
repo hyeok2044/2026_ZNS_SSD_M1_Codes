@@ -11,6 +11,14 @@
 
 #define PRODUCER_POLL_EVERY_N 1000
 
+typedef struct {
+  uint64_t    target_mps;
+  uint64_t    sent_count;
+  uint64_t    duration_sec;
+  double      actual_mps;
+  const char *state;
+} producer_phase_result_t;
+
 /* Optional per-message delivery callback (triggered by poll() or flush())
  * 메시지 발송이 성공하거나 (재시도 후에도) 실패하였을 때 호출됩니다.
  */
@@ -21,6 +29,37 @@ static void dr_msg_cb(rd_kafka_t               *kafka_handle,
   if (rkmessage->err) {
     g_error("Message delivery failed: %s", rd_kafka_err2str(rkmessage->err));
   }
+}
+
+static void
+print_producer_phase_result_json(const producer_options_t      *options,
+                                 const producer_phase_result_t *result)
+{
+  gint64 timestamp_us = g_get_real_time();
+
+  g_print("{"
+          "\"timestamp_us\":%" G_GINT64_FORMAT ","
+          "\"scenario\":\"%s\","
+          "\"payload_size\":%zu,"
+          "\"target_mps\":%" G_GUINT64_FORMAT ","
+          "\"actual_mps\":%.2f,"
+          "\"latency_avg_us\":0,"
+          "\"latency_p50_us\":0,"
+          "\"latency_p90_us\":0,"
+          "\"latency_p99_us\":0,"
+          "\"sent_count\":%" G_GUINT64_FORMAT ","
+          "\"acked_count\":0,"
+          "\"duration_sec\":%" G_GUINT64_FORMAT ","
+          "\"state\":\"%s\""
+          "}\n",
+          timestamp_us,
+          options->scenario,
+          options->payload_size,
+          result->target_mps,
+          result->actual_mps,
+          result->sent_count,
+          result->duration_sec,
+          result->state);
 }
 
 /* Kafka Server와 연결을 맺고 Producer를 반환합니다.
@@ -94,21 +133,34 @@ static void producer_idle_cb(void *opaque, int timeout_ms)
 
 /* 지정된 횟수만큼 메시지를 발행합니다.
  */
-static uint64_t produce_messages(rd_kafka_t               *producer,
-                                 const producer_options_t *options,
-                                 const char               *payload)
+static producer_phase_result_t
+run_producer_phase(rd_kafka_t               *producer,
+                   const producer_options_t *options,
+                   const char               *payload,
+                   uint64_t                  target_mps,
+                   uint64_t                  duration_sec,
+                   const char               *state)
 {
-  rate_pacer_t   pacer;
-  stats_logger_t stats;
+  rate_pacer_t            pacer;
+  stats_logger_t          stats;
+  gint64                  start_us;
+  gint64                  end_us;
+  uint64_t                expected_count;
+  producer_phase_result_t result;
 
-  rate_pacer_init(&pacer, options->ops, producer_idle_cb, producer);
+  expected_count = target_mps * duration_sec;
+
+  rate_pacer_init(&pacer, target_mps, producer_idle_cb, producer);
   stats_logger_init(&stats,
                     "sent",
-                    options->ops,
-                    options->message_count,
+                    target_mps,
+                    expected_count,
                     (gint64)options->stats_interval_us);
 
-  while (pacer.count < options->message_count) {
+  start_us = g_get_monotonic_time();
+  end_us   = start_us + ((gint64)duration_sec * G_USEC_PER_SEC);
+
+  while (g_get_monotonic_time() < end_us) {
     gint64              lag_us;
     rd_kafka_resp_err_t err;
 
@@ -119,10 +171,11 @@ static uint64_t produce_messages(rd_kafka_t               *producer,
       g_error("Failed to produce to topic %s: %s",
               options->topic,
               rd_kafka_err2str(err));
-      return pacer.count;
+      break;
     }
 
     rate_pacer_tick(&pacer);
+
     if ((pacer.count % PRODUCER_POLL_EVERY_N) == 0) {
       rd_kafka_poll(producer, 0);
     }
@@ -130,7 +183,15 @@ static uint64_t produce_messages(rd_kafka_t               *producer,
     stats_logger_maybe_log(&stats, pacer.count, lag_us);
   }
 
-  return pacer.count;
+  rd_kafka_poll(producer, 0);
+
+  result.target_mps   = target_mps;
+  result.sent_count   = pacer.count;
+  result.duration_sec = duration_sec;
+  result.actual_mps   = ((double)pacer.count) / (double)duration_sec;
+  result.state        = state;
+
+  return result;
 }
 
 /* 프로그램을 종료하기 전에 내부 큐에 남아있는 메시지를 모두 Flush합니다.
@@ -143,6 +204,50 @@ static void flush_producer(rd_kafka_t *producer)
   if (rd_kafka_outq_len(producer) > 0) {
     g_error("%d message(s) were not delivered", rd_kafka_outq_len(producer));
   }
+}
+
+/**
+ * MPS를 선형 증가시키며 warmup/measurement를 수행하는 ramp-up 실험.
+ * 각 phase 결과를 출력하고, 총 전송 메시지 수를 반환한다.
+ */
+static uint64_t run_producer_ramp(rd_kafka_t               *producer,
+                                  const producer_options_t *options,
+                                  const char               *payload)
+{
+  uint64_t total_sent = 0;
+
+  for (uint64_t target_mps = options->initial_mps;
+       target_mps <= options->max_mps;
+       target_mps += options->incr_mps) {
+
+    producer_phase_result_t warmup_result;
+    producer_phase_result_t measurement_result;
+
+    // Warm up phase
+    g_message("Starting warmup: target_mps=%" G_GUINT64_FORMAT, target_mps);
+
+    warmup_result = run_producer_phase(
+        producer, options, payload, target_mps, options->warmup_sec, "warmup");
+
+    print_producer_phase_result_json(options, &warmup_result);
+    total_sent += warmup_result.sent_count;
+
+    // Measurement Phase
+    g_message("Starting measurement: target_mps=%" G_GUINT64_FORMAT,
+              target_mps);
+
+    measurement_result = run_producer_phase(producer,
+                                            options,
+                                            payload,
+                                            target_mps,
+                                            options->measurement_sec,
+                                            "measurement");
+
+    print_producer_phase_result_json(options, &measurement_result);
+    total_sent += measurement_result.sent_count;
+  }
+
+  return total_sent;
 }
 
 int main(int argc, char **argv)
@@ -160,7 +265,7 @@ int main(int argc, char **argv)
   payload  = create_payload(&options);
   producer = create_producer(&options);
 
-  sent_count = produce_messages(producer, &options, payload);
+  sent_count = run_producer_ramp(producer, &options, payload);
   flush_producer(producer);
 
   g_message("%" G_GUINT64_FORMAT " messages were produced to topic %s.",

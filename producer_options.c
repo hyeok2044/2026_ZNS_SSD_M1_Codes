@@ -11,6 +11,7 @@ static void print_usage(const char *program)
   g_printerr("Usage: %s "
              "--bootstrap-servers HOST:PORT "
              "--topic TOPIC "
+             "--scenario producer_only|producer_consumer "
              "--payload-size BYTES "
              "--initial-mps N "
              "--incr-mps N "
@@ -40,6 +41,7 @@ void init_default_producer_options(producer_options_t *options)
   options->bootstrap_servers = "localhost:9092";
   options->acks              = "all";
   options->topic             = "ext4-test";
+  options->scenario          = "producer_only";
 
   options->initial_mps = 1000;
   options->incr_mps    = 1000;
@@ -56,6 +58,7 @@ int parse_producer_options(int argc, char **argv, producer_options_t *options)
 {
   static struct option long_options[] = {
       {"bootstrap-servers", required_argument, NULL, 'b'},
+      {"scenario",          required_argument, NULL, 'c'},
       {"initial-mps",       required_argument, NULL, 'i'},
       {"incr-mps",          required_argument, NULL, 'r'},
       {"max-mps",           required_argument, NULL, 'x'},
@@ -83,7 +86,15 @@ int parse_producer_options(int argc, char **argv, producer_options_t *options)
       }
       options->bootstrap_servers = optarg;
       break;
-
+    case 'c':
+      if (g_strcmp0(optarg, "producer_only") != 0 &&
+          g_strcmp0(optarg, "producer_consumer") != 0) {
+        g_printerr("Invalid scenario: %s\n", optarg);
+        print_usage(argv[0]);
+        return 0;
+      }
+      options->scenario = optarg;
+      break;
     case 'i':
       if (!parse_positive_uint64(optarg, &parsed_value)) {
         g_printerr("Invalid initial mps: %s\n", optarg);

@@ -8,6 +8,7 @@ typedef struct {
   const char *bootstrap_servers;
   const char *acks;
   const char *topic;
+  const char *scenario; // producer_only / producer_consumer
 
   uint64_t initial_mps; // initial messages per second
   uint64_t incr_mps;    // increment per step (linear ramp)

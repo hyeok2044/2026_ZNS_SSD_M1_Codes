@@ -20,12 +20,13 @@ if [ "$SCENARIO" != "producer_only" ] && [ "$SCENARIO" != "producer_consumer" ];
     exit 1
 fi
 
+INITIAL_BPS=${INITIAL_BPS:-102400000}   # 100 MB/s-ish
+INCR_BPS=${INCR_BPS:-102400000}           # 100 MBPS Increment
+MAX_BPS=${MAX_BPS:-2048000000}          # 2000 MB/s-ish
+
 BOOTSTRAP=${BOOTSTRAP:-127.0.0.1:9092}
 TOPIC=${TOPIC:-${FS_NAME}-test}
 
-INITIAL_MPS=${INITIAL_MPS:-1000}
-INCR_MPS=${INCR_MPS:-1000}
-MAX_MPS=${MAX_MPS:-200000}
 WARMUP_SEC=${WARMUP_SEC:-10}
 MEASUREMENT_SEC=${MEASUREMENT_SEC:-30}
 
@@ -43,9 +44,9 @@ echo "topic      : $TOPIC"
 echo "bootstrap  : $BOOTSTRAP"
 echo "log.dirs   : $LOG_DIR"
 echo "output dir : $OUT"
-echo "initial mps: $INITIAL_MPS"
-echo "incr mps   : $INCR_MPS"
-echo "max mps    : $MAX_MPS"
+echo "initial_bps : $INITIAL_BPS"
+echo "incr_bps    : $INCR_BPS"
+echo "max_bps     : $MAX_BPS"
 echo "warmup sec : $WARMUP_SEC"
 echo "measure sec: $MEASUREMENT_SEC"
 echo "iostat dev : $IOSTAT_DEV"
@@ -80,6 +81,15 @@ done
 
 # PAYLOAD Loop
 for PAYLOAD in 1024 10240 102400 1024000; do
+
+
+    INITIAL_MPS=$((INITIAL_BPS / PAYLOAD))
+    INCR_MPS=$((INCR_BPS / PAYLOAD))
+    MAX_MPS=$((MAX_BPS / PAYLOAD))
+
+    [ "$INITIAL_MPS" -lt 1 ] && INITIAL_MPS=1
+    [ "$INCR_MPS" -lt 1 ] && INCR_MPS=1
+    [ "$MAX_MPS" -lt 1 ] && MAX_MPS=1
     # 1. Create Directory
     DIR="$OUT/$PAYLOAD"
     mkdir -p "$DIR"
@@ -128,30 +138,30 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "  - vmstat pid: $VM_PID"
 
     # 4. Consumer-Producer experiment
-    CO_PID=""
-
-    if [ "$SCENARIO" = "producer_consumer" ]; then
-        log "[3/6] Starting consumer"
-
-#        ./consumer \
-#            --bootstrap-servers "$BOOTSTRAP" \
-#            --topic "$TOPIC" \
-#            --scenario "$SCENARIO" \
-#            --payload-size "$PAYLOAD" \
-#            > "$DIR/consumer.log" 2>&1 &
+#    CO_PID=""
+#
+#    if [ "$SCENARIO" = "producer_consumer" ]; then
+#        log "[3/6] Starting consumer"
+#
+##        ./consumer \
+##            --bootstrap-servers "$BOOTSTRAP" \
+##            --topic "$TOPIC" \
+##            --scenario "$SCENARIO" \
+##            --payload-size "$PAYLOAD" \
+##            > "$DIR/consumer.log" 2>&1 &
+##        CO_PID=$!
+#
+#        echo "  - using consumer stub: sleep 120"
+#        sleep 120 &
 #        CO_PID=$!
-
-        echo "  - using consumer stub: sleep 120"
-        sleep 120 &
-        CO_PID=$!
-        echo "  - consumer pid: $CO_PID"
-
-        echo "  - waiting 3 sec before producer..."
-        sleep 3
-    else
-        log "[3/6] Skip consumer for producer_only"
-    fi
-    log "[3/6] Starting consumer"
+#        echo "  - consumer pid: $CO_PID"
+#
+#        echo "  - waiting 3 sec before producer..."
+#        sleep 3
+#    else
+#        log "[3/6] Skip consumer for producer_only"
+#    fi
+#    log "[3/6] Starting consumer"
 
 
 
@@ -161,20 +171,20 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "  - initial_mps=$INITIAL_MPS incr_mps=$INCR_MPS max_mps=$MAX_MPS"
     echo "  - warmup_sec=$WARMUP_SEC measurement_sec=$MEASUREMENT_SEC"
 
-#    ./producer \
-#        --bootstrap-servers "$BOOTSTRAP" \
-#        --topic "$TOPIC" \
-#        --scenario "$SCENARIO" \
-#        --payload-size "$PAYLOAD" \
-#        --initial-mps "$INITIAL_MPS" \
-#        --incr-mps "$INCR_MPS" \
-#        --max-mps "$MAX_MPS" \
-#        --warmup-sec "$WARMUP_SEC" \
-#        --measurement-sec "$MEASUREMENT_SEC" \
-#        > "$DIR/producer.log" 2>&1
+    ./producer \
+        --bootstrap-servers "$BOOTSTRAP" \
+        --topic "$TOPIC" \
+        --scenario "$SCENARIO" \
+        --payload-size "$PAYLOAD" \
+        --initial-mps "$INITIAL_MPS" \
+        --incr-mps "$INCR_MPS" \
+        --max-mps "$MAX_MPS" \
+        --warmup-sec "$WARMUP_SEC" \
+        --measurement-sec "$MEASUREMENT_SEC" \
+        > "$DIR/producer.log" 2>&1
 
-    echo "  - using producer stub: sleep 30"
-    sleep 30
+#    echo "  - using producer stub: sleep 30"
+#    sleep 30
 
     echo "  - producer finished"
     echo "  - grace sleep: $GRACE sec"
