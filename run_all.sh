@@ -2,13 +2,14 @@
 set -euo pipefail
 
 ./kafka_storage_transition.sh ext4 /mnt/ext4/kafka-logs
-./run_experiment.sh ext4 /mnt/ext4/kafka-logs producer_only
+./run_experiment.sh ext4 /mnt/ext4/kafka-logs producer_consumer
 
 ./kafka_storage_transition.sh ext4 /mnt/ext4/kafka-logs
-./run_experiment.sh ext4 /mnt/ext4/kafka-logs producer_consumer
+./run_experiment.sh ext4 /mnt/ext4/kafka-logs producer_only
+
+./kafka_storage_transition.sh f2fs /mnt/f2fs/kafka-logs
+./run_experiment.sh f2fs /mnt/f2fs/kafka-logs producer_consumer
 
 ./kafka_storage_transition.sh f2fs /mnt/f2fs/kafka-logs
 ./run_experiment.sh f2fs /mnt/f2fs/kafka-logs producer_only
 
-./kafka_storage_transition.sh f2fs /mnt/f2fs/kafka-logs
-./run_experiment.sh f2fs /mnt/f2fs/kafka-logs producer_consumer
