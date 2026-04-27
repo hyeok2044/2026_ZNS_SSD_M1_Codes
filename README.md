@@ -1,329 +1,282 @@
 # EXT4(CNS), F2FS(CNS)에 대한 Kafka Broker의 I/O 성능 비교 분석
 
 ## 이동혁(2021086917), 최현준(2021037401)
----
 
-# 🧭 전체 목표
+## Kafka 설치 및 준비
 
-- Kafka를 **ext4 / f2fs 각각에서 실행**
-- Prometheus + Grafana로 **모니터링**
-- `kafka-benchmarking`으로 **성능 비교 실험**
+### Java 설치
 
----
-
-# 0. 환경 전제
-
-- Ubuntu (22.04+ 권장)
-- SSD (NVMe)
-- Docker / Docker Compose 사용
-- 실험은 producer → consumer 순으로 진행.
-    - 내부적으로는 f2fs → ext4, 각 파일 시스템당 3번의 small load (1M) → big load (10M)으로 진행.
-
----
-
-# 1. 디스크 파티셔닝
-
-## 목표 구조
-
-| 파티션 | 용도 |
-| --- | --- |
-| / | Ubuntu (100GB) |
-| /mnt/ext4 | Kafka ext4 |
-| /mnt/f2fs | Kafka f2fs |
-
----
-
-## 파티션 생성 (이미 했다면 skip)
-
-```
-sudo parted /dev/nvme0n1
-print free
-```
-
-예:
-
-```
-mkpart primary ext4 100GB 150GB
-mkpart primary 150GB 200GB
-quit
-```
-
----
-
-## 파일시스템 생성
-
-```
-sudo mkfs.ext4 /dev/nvme0n1p3
-sudo mkfs.f2fs /dev/nvme0n1p4
-```
-
----
-
-## 마운트
-
-```
-sudo mkdir -p /mnt/ext4 /mnt/f2fs
-```
-
-UUID 확인:
-
-```
-blkid
-```
-
-`/etc/fstab` 추가:
-
-```
-UUID=ext4_uuid /mnt/ext4 ext4 defaults,noatime 0 2
-UUID=f2fs_uuid /mnt/f2fs f2fs defaults,noatime 0 2
-```
-
-적용:
-
-```
-sudo mount -a
-```
-
----
-
-# 2. Docker 설치
-
-```
-# Add Docker's official GPG key:
+```bash
 sudo apt update
-sudo apt install ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-# Add the repository to Apt sources:
-sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-Components: stable
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-
-sudo apt update
-
-sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
-
-sudo systemctl status docker
-
-sudo groupadd docker
-udo usermod -aG docker $USER
-newgrp docker
-docker run hello-world
+sudo apt install openjdk-17-jdk -y
+java -version
 ```
 
-재로그인
+Kafka는 `4.2.0` 버전을 사용한다.
 
----
+```bash
+scp -r .\kafka_2.13-4.2.0.tgz h@192.168.0.23:~/
 
-# 3. 실험 디렉토리 준비
-
-```
-mkdir-p ~/kafka-fs-lab/{jmx,prometheus,grafana/provisioning/datasources}
-mkdir-p /mnt/ext4/kafka-data
-mkdir -p /mnt/f2fs/kafka-data
+tar -zxvf kafka_2.13-4.2.0.tgz
+cd ~/kafka_2.13-4.2.0
 ```
 
----
+### Kafka log directory 준비
 
-# 4. JMX Exporter 설치
+```bash
+sudo mkdir -p /mnt/ext4/kafka-logs
+sudo chown -R $USER:$USER /mnt/ext4/kafka-logs
 
+sudo mkdir -p /mnt/f2fs/kafka-logs
+sudo chown -R $USER:$USER /mnt/f2fs/kafka-logs
 ```
-cd ~/kafka-fs-lab/jmx
 
-wget -O jmx_prometheus_javaagent.jar \
-https://github.com/prometheus/jmx_exporter/releases/download/1.5.0/jmx_prometheus_javaagent-1.5.0.jar
+### Kafka 설정
+
+```bash
+vi ~/kafka_2.13-4.2.0/config/server.properties
 ```
 
-확인:
+필수 설정:
 
+```properties
+num.partitions=8
+offsets.topic.replication.factor=1
+log.dirs=/mnt/ext4/kafka-logs
 ```
-file jmx_prometheus_javaagent.jar
+
+`log.dirs`는 실험 대상 파일 시스템에 맞춰 매번 변경된다.
+
+### Kafka storage format
+
+```bash
+KAFKA_CLUSTER_ID="$(bin/kafka-storage.sh random-uuid)"
+
+~/kafka_2.13-4.2.0/bin/kafka-storage.sh format \
+  --standalone \
+  -t "$KAFKA_CLUSTER_ID" \
+  -c ~/kafka_2.13-4.2.0/config/server.properties
 ```
 
 ---
 
-설정 파일 옮기기.
+## 부하 생성기 빌드
 
-```c
+### rdkafka / glib 설치
 
-unzip kafka-fs-lab.zip -d ~/kafka-fs-lab
+```bash
+sudo apt install librdkafka-dev pkg-config libglib2.0-dev build-essential -y
+```
+
+### 코드 다운로드
+
+```bash
+git clone https://github.com/hyeok2044/2026_ZNS_SSD_M1_Codes
+cd 2026_ZNS_SSD_M1_Codes
+```
+
+### Build
+
+```bash
+make clean
+make
 ```
 
 ---
 
-# 5. 실행
+## Run
 
-```
-cd ~/kafka-fs-lab
-docker compose up -d
-```
-
-확인:
-
-```
-docker ps
+```bash
+# optional: iostat 대상 device 지정
+IOSTAT_DEV=nvme0n1 ./run_all.sh
 ```
 
 ---
 
-# 7. Grafana 접속 (SSH 터널)
+# 📌 Experiment Methodology
+
+## 1. 전체 실험 구조
+
+본 실험은 Kafka 기반에서 파일 시스템(ext4, f2fs)의 성능을 비교하기 위해 다음과 같은 구조로 수행된다.
+
+- File System: `ext4`, `f2fs`
+- Scenario:
+  - `producer_only`
+  - `producer_consumer`
+
+- Payload Size:
+  - 1024B, 10240B, 102400B, 1024000B
+
+- Throughput Control:
+  - BPS → MPS 변환 기반 linear ramp-up
+
+---
+
+## 2. 실험 단계
+
+각 payload에 대해 아래 단계를 반복 수행한다.
+
+### (1) Kafka 초기화
+
+- 기존 topic 삭제 후 재생성
+- log.dirs를 대상 파일 시스템으로 설정
+- Kafka storage format 수행
+- clean state 보장
+
+---
+
+### (2) 시스템 메트릭 수집 시작
+
+다음 시스템 지표를 수집한다:
+
+- iostat
+- vmstat
 
 ```
-ssh -L 3000:localhost:3000 <user@server>
-```
-
-브라우저:
-
-```
-http://localhost:3000
-```
-
-기본 id/pw: admin/admin
-
-```c
-dashboard/import/1860 -> prometheus 사용 + 웬만한거 다 있음.
+iostat -dx 1 -y -t -o JSON
+vmstat 1
 ```
 
 ---
 
-# 9. Benchmark 도구 설치
+### (3) Consumer 실행 (optional)
+
+`producer_consumer` 시나리오일 경우:
+
+- consumer를 먼저 실행
+- producer 시작 전에 안정화 대기 (3초)
+
+---
+
+### (4) Producer 실행 (핵심)
+
+Producer는 다음 방식으로 부하를 생성한다:
+
+#### 🔹 Ramp-up 방식
 
 ```
-git clone https://github.com/gkoenig/kafka-benchmarking.git
-cd kafka-benchmarking
-chmod +x producer/scripts/*.sh
+target_mps = initial → max (linear 증가)
+```
+
+각 step마다:
+
+```
+warmup phase → measurement phase
+```
+
+#### 🔹 Phase 정의
+
+- Warmup:
+  - cache, buffer 안정화
+  - 측정 제외
+
+- Measurement:
+  - 실제 throughput 측정
+  - JSONL로 결과 기록
+
+---
+
+### (5) Producer 출력
+
+각 measurement phase마다 다음을 기록:
+
+```
+{
+  "timestamp_us": ...,
+  "payload_size": ...,
+  "target_mps": ...,
+  "actual_mps": ...,
+  "sent_count": ...,
+  "acked_count": ...,
+  "duration_sec": ...,
+  "state": "measurement"
+}
 ```
 
 ---
 
-# 10. output 디렉토리 생성
+### (6) Consumer 출력
+
+Consumer는 ramp-up에 관여하지 않고, 다음을 지속적으로 기록:
 
 ```
-mkdir -p /tmp/output
-```
-
----
-
-# 11. ext4 테스트
-
-```sql
-docker cp ~/kafka-benchmarking/producer/scripts/benchmark-producer.sh kafka-ext4:/tmp/
-
-docker exec -it kafka-ext4 /bin/bash
-
-mkdir -p /tmp/output
-chmod 777 /tmp/output
-
-export KAFKA_TOPICS_CMD="/opt/kafka/bin/kafka-topics.sh"
-export KAFKA_BENCHMARK_CMD="/opt/kafka/bin/kafka-producer-perf-test.sh"
-  
-# producer test
-KAFKA_JVM_PERFORMANCE_OPTS="" /opt/kafka/bin/kafka-producer-perf-test.sh \
-  --topic test-ext4-heavy \
-  --num-records 10000000 \
-  --record-size 1024 \
-  --throughput -1 \
-  --producer-props acks=1 compression.type=none batch.size=16384 linger.ms=5 bootstrap.servers=localhost:9092
-  
-# consumer test
-KAFKA_JVM_PERFORMANCE_OPTS="" /opt/kafka/bin/kafka-consumer-perf-test.sh \
-  --topic test-ext4-heavy \
-  --messages 1000000 \
-  --bootstrap-server localhost:9092 \
-  --fetch-size 1048576 \
-  --threads 1
-  
-docker cp kafka-ext4:/tmp/output ./ext4-result-big
-  
+{
+  "timestamp_us": ...,
+  "payload_size": ...,
+  "consume_mps": ...,
+  "consumed_count": ...,
+  "state": "running"
+}
 ```
 
 ---
 
-# 12. f2fs 테스트
+### (7) 종료 및 정리
 
-```sql
-docker cp ~/kafka-benchmarking/producer/scripts/benchmark-producer.sh kafka-f2fs:/tmp/
+- Producer 종료 후 grace period
+- Consumer 종료
+- iostat / vmstat 종료
+- 다음 payload로 이동
 
-docker exec -it kafka-f2fs /bin/bash
+---
 
-mkdir -p /tmp/output
-chmod 777 /tmp/output
+## 3. Throughput 제어 방식
 
-export KAFKA_TOPICS_CMD="/opt/kafka/bin/kafka-topics.sh"
-export KAFKA_BENCHMARK_CMD="/opt/kafka/bin/kafka-producer-perf-test.sh"
+실험은 MPS가 아닌 **BPS 기반으로 정의**된다.
 
-# producer test
-KAFKA_JVM_PERFORMANCE_OPTS="" /opt/kafka/bin/kafka-producer-perf-test.sh \
-  --topic test-f2fs-heavy \
-  --num-records 10000000 \
-  --record-size 1024 \
-  --throughput -1 \
-  --producer-props acks=1 compression.type=none batch.size=16384 linger.ms=5 bootstrap.servers=localhost:9094
-  
-# consumer test
-KAFKA_JVM_PERFORMANCE_OPTS="" /opt/kafka/bin/kafka-consumer-perf-test.sh \
-  --topic test-f2fs-heavy \
-  --messages 1000000 \
-  --bootstrap-server localhost:9094 \
-  --fetch-size 1048576 \
-  --threads 1
-docker cp kafka-f2fs:/tmp/output ./f2fs-result
+```
+MPS = BPS / payload_size
+```
+
+예시:
+
+```
+INITIAL_BPS=71680000   # 70 MB/s
+INCR_BPS=5120000       # 5 MB/s
+MAX_BPS=122880000      # 120 MB/s
+```
+
+→ payload에 따라 자동으로 MPS 변환
+
+---
+
+## 4. Saturation 판단 기준
+
+다음 조건 중 하나를 만족하면 saturation으로 간주:
+
+- actual_mps < target_mps \* 0.95
+- I/O wait 증가 (vmstat wa 상승)
+- disk util ≈ 100% (iostat)
+- write latency 증가 (await 증가)
+
+---
+
+## 5. 결과 저장 구조
+
+```
+results/
+  ext4/
+    producer_only/
+      timestamp/
+        payload/
+  f2fs/
+    producer_consumer/
+      timestamp/
+        payload/
 ```
 
 ---
 
-# 13. 결과 확인
+## 6. 핵심 설계 원칙
 
-```
-scp -r h@192.168.0.23:/home/<사용자명>/kafka-fs-lab/<경로> .
-```
-
-👉 CSV / TXT 생성됨
-
----
-
-# 14. 비교 포인트
-
-Grafana에서 확인:
-
-- throughput
-- latency
-- disk write
-- iowait
-- JVM GC
+- 모든 실험은 clean state에서 시작
+- throughput은 BPS 기준으로 통일
+- producer는 load generator
+- consumer는 observer
+- JSONL 기반 결과 저장
 
 ---
 
-# 🧠 실험 팁 (중요)
+# 한 줄 요약
 
-- 항상 동일 조건으로 반복
-- f2fs → ext4 순서로 진행.
-- 3회를 진행.
-
-## 비고:
-
-1. 실험 완료 하시고
-2. IOPS, throughput (grafana) 
-    1. Time frame 설정:
-        
-        ![image.png](image.png)
-        
-    2. Disk IOps - Inspect
-    
-    ![image.png](image%201.png)
-    
-    c. 적절한 data frame (producer: write/ consumer: read) - Download CSV
-    
-    ![image.png](image%202.png)
-    
-3. 결과 output 파일 (벤치마크 스크립트)
-    
-    ```sql
-    scp -r h@192.168.0.23:/home/h/kafka-fs-lab/ext4-result1 .
-    ```
+→ Producer가 linear ramp-up으로 부하를 증가시키고, Consumer 및 시스템 지표를 통해 saturation 지점을 관측하는 실험 구조
