@@ -60,8 +60,31 @@ static void dr_msg_cb(rd_kafka_t               *kafka_handle,
                       const rd_kafka_message_t *rkmessage,
                       void                     *opaque)
 {
+  // 1. runtime 구조체 가져오기
+  producer_runtime_t *runtime = (producer_runtime_t *)opaque;
+
+  // 2. 메시지 전송 시 담았던 context(시간 정보) 가져오기
+  message_ctx_t *msg_ctx = (message_ctx_t *)rkmessage->_private;
+
   if (rkmessage->err) {
-    g_error("Message delivery failed: %s", rd_kafka_err2str(rkmessage->err));
+    // 에러 발생 시 로그 출력 (실험 중엔 g_warning 권장)
+    g_warning("Message delivery failed: %s", rd_kafka_err2str(rkmessage->err));
+  } else {
+    // 성공 시 acked_count 증가
+    runtime->acked_count++;
+
+    // 3. 레이턴시 측정 상태인 경우(measurement phase) 배열에 추가
+    if (runtime->collect_latency && msg_ctx) {
+      gint64 now     = g_get_monotonic_time();
+      gint64 latency = now - msg_ctx->send_time_us;
+      g_array_append_val(runtime->latencies_us, latency);
+    }
+  }
+
+  // 4. 사용이 끝난 context 메모리 해제 (produce_message에서 g_new로
+  // 생성했으므로)
+  if (msg_ctx) {
+    g_free(msg_ctx);
   }
 }
 
