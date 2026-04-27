@@ -20,9 +20,9 @@ if [ "$SCENARIO" != "producer_only" ] && [ "$SCENARIO" != "producer_consumer" ];
     exit 1
 fi
 
-INITIAL_BPS=${INITIAL_BPS:-102400000}   # 100 MB/s-ish
-INCR_BPS=${INCR_BPS:-102400000}           # 100 MBPS Increment
-MAX_BPS=${MAX_BPS:-409600000}          # 2000 MB/s-ish
+INITIAL_BPS=${INITIAL_BPS:-71680000}   # 70 MB/s-ish
+INCR_BPS=${INCR_BPS:-5120000}           # 5 MBPS Increment
+MAX_BPS=${MAX_BPS:-122880000}          # 120 MB/s-ish
 
 BOOTSTRAP=${BOOTSTRAP:-127.0.0.1:9092}
 TOPIC=${TOPIC:-${FS_NAME}-test}
@@ -138,30 +138,28 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "  - vmstat pid: $VM_PID"
 
     # 4. Consumer-Producer experiment
-#    CO_PID=""
-#
-#    if [ "$SCENARIO" = "producer_consumer" ]; then
-#        log "[3/6] Starting consumer"
-#
-##        ./consumer \
-##            --bootstrap-servers "$BOOTSTRAP" \
-##            --topic "$TOPIC" \
-##            --scenario "$SCENARIO" \
-##            --payload-size "$PAYLOAD" \
-##            > "$DIR/consumer.log" 2>&1 &
-##        CO_PID=$!
-#
-#        echo "  - using consumer stub: sleep 120"
-#        sleep 120 &
-#        CO_PID=$!
-#        echo "  - consumer pid: $CO_PID"
-#
-#        echo "  - waiting 3 sec before producer..."
-#        sleep 3
-#    else
-#        log "[3/6] Skip consumer for producer_only"
-#    fi
-#    log "[3/6] Starting consumer"
+    CO_PID=""
+
+    if [ "$SCENARIO" = "producer_consumer" ]; then
+        log "[3/6] Starting consumer"
+
+        ./consumer \
+            --bootstrap-servers "$BOOTSTRAP" \
+            --topic "$TOPIC" \
+            --payload-size "$PAYLOAD" \
+            --warmup-sec "$WARMUP_SEC" \
+            --measurement-sec "$MEASUREMENT_SEC" \
+            > "$DIR/consumer.jsonl" \
+            2> "$DIR/consumer.log" &
+
+        CO_PID=$!
+        echo "  - consumer pid: $CO_PID"
+
+        echo "  - waiting 3 sec before producer..."
+        sleep 3
+    else
+        log "[3/6] Skip consumer for producer_only"
+    fi
 
 
 
@@ -181,7 +179,8 @@ for PAYLOAD in 1024 10240 102400 1024000; do
         --max-mps "$MAX_MPS" \
         --warmup-sec "$WARMUP_SEC" \
         --measurement-sec "$MEASUREMENT_SEC" \
-        > "$DIR/producer.log" 2>&1
+        > "$DIR/producer.jsonl" \
+        2> "$DIR/producer.log"
 
 #    echo "  - using producer stub: sleep 30"
 #    sleep 30
@@ -220,7 +219,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "    $DIR/iostat.json"
     echo "    $DIR/vmstat.txt"
 #    echo "    $DIR/consumer.log"
-#    echo "    $DIR/producer.log"
+    echo "    $DIR/producer.log"
 
     log "  - break time: 60 sec"
     sleep 60

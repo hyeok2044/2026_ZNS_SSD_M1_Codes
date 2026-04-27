@@ -180,7 +180,7 @@ run_producer_phase(rd_kafka_t               *producer,
       rd_kafka_poll(producer, 0);
     }
 
-    stats_logger_maybe_log(&stats, pacer.count, lag_us);
+    //    stats_logger_maybe_log(&stats, pacer.count, lag_us);
   }
 
   rd_kafka_poll(producer, 0);
