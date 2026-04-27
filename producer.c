@@ -12,12 +12,46 @@
 #define PRODUCER_POLL_EVERY_N 1000
 
 typedef struct {
-  uint64_t    target_mps;
-  uint64_t    sent_count;
-  uint64_t    duration_sec;
-  double      actual_mps;
+  uint64_t target_mps;
+  uint64_t sent_count;
+  uint64_t acked_count;
+  uint64_t duration_sec;
+  double   actual_mps;
+
+  double latency_avg_us;
+  gint64 latency_p50_us;
+  gint64 latency_p90_us;
+  gint64 latency_p99_us;
+
   const char *state;
 } producer_phase_result_t;
+
+/*
+ * Callback의 Latency Check 전용 struct
+ */
+typedef struct {
+  gint64 send_time_us;
+} message_ctx_t;
+
+typedef struct {
+  gboolean collect_latency;
+  uint64_t acked_count;
+  GArray  *latencies_us;
+} producer_runtime_t;
+
+static gint compare_gint64(const void *a, const void *b, void *user_data)
+{
+  const gint64 va = *(const gint64 *)a;
+  const gint64 vb = *(const gint64 *)b;
+
+  if (va < vb) {
+    return -1;
+  }
+  if (va > vb) {
+    return 1;
+  }
+  return 0;
+}
 
 /* Optional per-message delivery callback (triggered by poll() or flush())
  * 메시지 발송이 성공하거나 (재시도 후에도) 실패하였을 때 호출됩니다.
@@ -43,12 +77,12 @@ print_producer_phase_result_json(const producer_options_t      *options,
           "\"payload_size\":%zu,"
           "\"target_mps\":%" G_GUINT64_FORMAT ","
           "\"actual_mps\":%.2f,"
-          "\"latency_avg_us\":0,"
-          "\"latency_p50_us\":0,"
-          "\"latency_p90_us\":0,"
-          "\"latency_p99_us\":0,"
+          "\"latency_avg_us\":%.2f,"
+          "\"latency_p50_us\":%" G_GINT64_FORMAT ","
+          "\"latency_p90_us\":%" G_GINT64_FORMAT ","
+          "\"latency_p99_us\":%" G_GINT64_FORMAT ","
           "\"sent_count\":%" G_GUINT64_FORMAT ","
-          "\"acked_count\":0,"
+          "\"acked_count\":%" G_GUINT64_FORMAT ","
           "\"duration_sec\":%" G_GUINT64_FORMAT ","
           "\"state\":\"%s\""
           "}\n",
@@ -57,14 +91,20 @@ print_producer_phase_result_json(const producer_options_t      *options,
           options->payload_size,
           result->target_mps,
           result->actual_mps,
+          result->latency_avg_us,
+          result->latency_p50_us,
+          result->latency_p90_us,
+          result->latency_p99_us,
           result->sent_count,
+          result->acked_count,
           result->duration_sec,
           result->state);
 }
 
 /* Kafka Server와 연결을 맺고 Producer를 반환합니다.
  */
-static rd_kafka_t *create_producer(const producer_options_t *options)
+static rd_kafka_t *create_producer(const producer_options_t *options,
+                                   producer_runtime_t       *runtime)
 {
   rd_kafka_t      *producer;
   rd_kafka_conf_t *conf;
@@ -75,6 +115,7 @@ static rd_kafka_t *create_producer(const producer_options_t *options)
   set_config(conf, "bootstrap.servers", (char *)options->bootstrap_servers);
   set_config(conf, "acks", (char *)options->acks);
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
+  rd_kafka_conf_set_opaque(conf, runtime);
 
   producer = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
   if (!producer) {
@@ -109,13 +150,15 @@ static rd_kafka_resp_err_t produce_message(rd_kafka_t               *producer,
 {
   while (1) {
     rd_kafka_resp_err_t err;
+    message_ctx_t      *msg_ctx = g_new(message_ctx_t, 1);
+    msg_ctx->send_time_us       = g_get_monotonic_time();
 
     err = rd_kafka_producev(
         producer,
         RD_KAFKA_V_TOPIC(options->topic),
         RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
         RD_KAFKA_V_VALUE((void *)payload, options->payload_size),
-        RD_KAFKA_V_OPAQUE(NULL),
+        RD_KAFKA_V_OPAQUE(msg_ctx),
         RD_KAFKA_V_END);
 
     if (err != RD_KAFKA_RESP_ERR__QUEUE_FULL) {
@@ -148,6 +191,11 @@ run_producer_phase(rd_kafka_t               *producer,
   uint64_t                expected_count;
   producer_phase_result_t result;
 
+  producer_runtime_t *runtime = rd_kafka_opaque(producer);
+
+  runtime->collect_latency = g_strcmp0(state, "measurement") == 0;
+  g_array_set_size(runtime->latencies_us, 0);
+
   expected_count = target_mps * duration_sec;
 
   rate_pacer_init(&pacer, target_mps, producer_idle_cb, producer);
@@ -161,10 +209,9 @@ run_producer_phase(rd_kafka_t               *producer,
   end_us   = start_us + ((gint64)duration_sec * G_USEC_PER_SEC);
 
   while (g_get_monotonic_time() < end_us) {
-    gint64              lag_us;
     rd_kafka_resp_err_t err;
 
-    lag_us = rate_pacer_wait(&pacer);
+    rate_pacer_wait(&pacer);
 
     err = produce_message(producer, options, payload);
     if (err) {
@@ -184,9 +231,32 @@ run_producer_phase(rd_kafka_t               *producer,
   }
 
   rd_kafka_poll(producer, 0);
+  uint64_t n = runtime->latencies_us->len;
+
+  if (n > 0) {
+    gint64 *arr = (gint64 *)runtime->latencies_us->data;
+
+    g_qsort_with_data(arr, n, sizeof(gint64), compare_gint64, NULL);
+
+    gint64 sum = 0;
+    for (uint64_t i = 0; i < n; i++) {
+      sum += arr[i];
+    }
+
+    result.latency_avg_us = (double)sum / (double)n;
+    result.latency_p50_us = arr[n * 50 / 100];
+    result.latency_p90_us = arr[n * 90 / 100];
+    result.latency_p99_us = arr[n * 99 / 100];
+  } else {
+    result.latency_avg_us = 0;
+    result.latency_p50_us = 0;
+    result.latency_p90_us = 0;
+    result.latency_p99_us = 0;
+  }
 
   result.target_mps   = target_mps;
   result.sent_count   = pacer.count;
+  result.acked_count  = runtime->acked_count;
   result.duration_sec = duration_sec;
   result.actual_mps   = ((double)pacer.count) / (double)duration_sec;
   result.state        = state;
@@ -261,9 +331,11 @@ int main(int argc, char **argv)
   if (!parse_producer_options(argc, argv, &options)) {
     return 1;
   }
+  producer_runtime_t runtime = {0};
+  runtime.latencies_us       = g_array_new(FALSE, FALSE, sizeof(gint64));
 
   payload  = create_payload(&options);
-  producer = create_producer(&options);
+  producer = create_producer(&options, &runtime);
 
   sent_count = run_producer_ramp(producer, &options, payload);
   flush_producer(producer);
@@ -272,6 +344,7 @@ int main(int argc, char **argv)
             sent_count,
             options.topic);
 
+  g_array_free(runtime.latencies_us, TRUE);
   free(payload);
   rd_kafka_destroy(producer);
 
