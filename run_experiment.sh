@@ -133,7 +133,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
     echo "  - iostat pid: $IO_PID"
 
     echo "  - vmstat output: $DIR/vmstat.txt"
-    vmstat 1 > "$DIR/vmstat.txt" &
+    vmstat 1 | awk '{ print strftime("%s"), $0 }' > "$DIR/vmstat.txt" &
     VM_PID=$!
     echo "  - vmstat pid: $VM_PID"
 
@@ -149,8 +149,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
             --payload-size "$PAYLOAD" \
             --warmup-sec "$WARMUP_SEC" \
             --measurement-sec "$MEASUREMENT_SEC" \
-            > "$DIR/consumer.jsonl" \
-            2> "$DIR/consumer.log" &
+            | tee "$DIR/consumer.jsonl" &
 
         CO_PID=$!
         echo "  - consumer pid: $CO_PID"
@@ -179,8 +178,7 @@ for PAYLOAD in 1024 10240 102400 1024000; do
         --max-mps "$MAX_MPS" \
         --warmup-sec "$WARMUP_SEC" \
         --measurement-sec "$MEASUREMENT_SEC" \
-        > "$DIR/producer.jsonl" \
-        2> "$DIR/producer.log"
+        | tee "$DIR/producer.jsonl"
 
 #    echo "  - using producer stub: sleep 30"
 #    sleep 30

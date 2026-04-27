@@ -202,7 +202,7 @@ static void flush_producer(rd_kafka_t *producer)
   rd_kafka_flush(producer, 10 * 1000);
 
   if (rd_kafka_outq_len(producer) > 0) {
-    g_error("%d message(s) were not delivered", rd_kafka_outq_len(producer));
+    g_warning("%d message(s) were not delivered", rd_kafka_outq_len(producer));
   }
 }
 
