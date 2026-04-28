@@ -254,6 +254,13 @@ run_producer_phase(rd_kafka_t               *producer,
     //    stats_logger_maybe_log(&stats, pacer.count, lag_us);
   }
 
+  /* 실제 발송이 끝난 시각. produce_message의 QUEUE_FULL 재시도 등으로
+   * 루프가 end_us를 넘어 길어질 수 있으므로 actual_mps는 목표 시간이 아닌
+   * 실측 경과 시간 기준으로 계산해야 한다.
+   */
+  gint64 actual_end_us      = g_get_monotonic_time();
+  double actual_duration_us = (double)(actual_end_us - start_us);
+
   rd_kafka_poll(producer, 0);
   uint64_t n = runtime->latencies_us->len;
 
@@ -282,8 +289,9 @@ run_producer_phase(rd_kafka_t               *producer,
   result.sent_count   = pacer.count;
   result.acked_count  = runtime->acked_count;
   result.duration_sec = duration_sec;
-  result.actual_mps   = ((double)pacer.count) / (double)duration_sec;
-  result.state        = state;
+  result.actual_mps =
+      ((double)pacer.count * G_USEC_PER_SEC) / actual_duration_us;
+  result.state = state;
 
   return result;
 }
