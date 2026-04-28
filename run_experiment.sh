@@ -122,13 +122,6 @@ for PAYLOAD in 1024000 102400 10240 1024; do
         --replication-factor 1 \
         --config max.message.bytes=20971520
 
-    echo "  - describing topic config..."
-    "$KAFKA_BIN/kafka-configs.sh" \
-        --bootstrap-server "$BOOTSTRAP" \
-        --entity-type topics \
-        --entity-name "$TOPIC" \
-        --describe
-
     echo "  - waiting for topic stabilization..."
     sleep 10
 
