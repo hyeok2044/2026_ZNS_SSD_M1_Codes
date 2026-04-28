@@ -216,6 +216,7 @@ run_producer_phase(rd_kafka_t               *producer,
 
   producer_runtime_t *runtime = rd_kafka_opaque(producer);
 
+  runtime->acked_count     = 0;
   runtime->collect_latency = g_strcmp0(state, "measurement") == 0;
   g_array_set_size(runtime->latencies_us, 0);
 
