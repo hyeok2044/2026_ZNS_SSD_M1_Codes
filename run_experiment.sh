@@ -80,7 +80,7 @@ for _ in {1..30}; do
 done
 
 # PAYLOAD Loop
-for PAYLOAD in 1024 10240 102400 512000; do
+for PAYLOAD in 1024000 102400 10240 1024; do
 
 
     INITIAL_MPS=$((INITIAL_BPS / PAYLOAD))
