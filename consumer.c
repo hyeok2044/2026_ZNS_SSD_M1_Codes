@@ -34,6 +34,15 @@ int main(int argc, char **argv)
   // User-specific properties that you must set
   set_config(conf, "bootstrap.servers", (char *)options.bootstrap_servers);
 
+  // Add Max Limit
+  rd_kafka_conf_set(
+      conf, "fetch.message.max.bytes", "20971520", errstr, sizeof(errstr));
+  rd_kafka_conf_set(
+      conf, "max.partition.fetch.bytes", "20971520", errstr, sizeof(errstr));
+
+  rd_kafka_conf_set(
+      conf, "fetch.max.bytes", "524288000", errstr, sizeof(errstr));
+
   // Fixed properties
   set_config(conf, "group.id", (char *)options.group_id);
   set_config(conf, "auto.offset.reset", (char *)options.auto_offset_reset);

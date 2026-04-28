@@ -20,9 +20,9 @@ if [ "$SCENARIO" != "producer_only" ] && [ "$SCENARIO" != "producer_consumer" ];
     exit 1
 fi
 
-INITIAL_BPS=${INITIAL_BPS:-71680000}   # 70 MB/s-ish
+INITIAL_BPS=${INITIAL_BPS:-92160000}   # 90 MB/s-ish
 INCR_BPS=${INCR_BPS:-10240000}           # 10 MBPS Increment
-MAX_BPS=${MAX_BPS:-122880000}          # 120 MB/s-ish
+MAX_BPS=${MAX_BPS:-153600000}          # 150 MB/s-ish
 
 BOOTSTRAP=${BOOTSTRAP:-127.0.0.1:9092}
 TOPIC=${TOPIC:-${FS_NAME}-test}
@@ -80,7 +80,7 @@ for _ in {1..30}; do
 done
 
 # PAYLOAD Loop
-for PAYLOAD in 1024 10240 102400 512000; do
+for PAYLOAD in 1024000 102400 10240 1024; do
 
 
     INITIAL_MPS=$((INITIAL_BPS / PAYLOAD))
@@ -119,7 +119,8 @@ for PAYLOAD in 1024 10240 102400 512000; do
         --create \
         --topic "$TOPIC" \
         --partitions 8 \
-        --replication-factor 1
+        --replication-factor 1 \
+        --config max.message.bytes=20971520
 
     echo "  - waiting for topic stabilization..."
     sleep 10
