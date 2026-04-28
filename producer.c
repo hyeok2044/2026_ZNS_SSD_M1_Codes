@@ -142,6 +142,8 @@ static rd_kafka_t *create_producer(const producer_options_t *options,
       conf, "message.max.bytes", "2097152", errstr, sizeof(errstr));
   rd_kafka_conf_set(
       conf, "max.request.size", "2097152", errstr, sizeof(errstr));
+  rd_kafka_conf_set(conf, "linger.ms", "0", errstr, sizeof(errstr));
+  rd_kafka_conf_set(conf, "batch.size", "1200000", errstr, sizeof(errstr));
 
   set_config(conf, "acks", (char *)options->acks);
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
