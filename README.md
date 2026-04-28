@@ -50,28 +50,23 @@ log.dirs=/mnt/ext4/kafka-logs
 ### 추가: Broker 메시지 제한 관련
 
 ```c
-// ~/kafka_2.13-4.2.0/config/broker.properties
-
-message.max.bytes=2097152
-replica.fetch.max.bytes=2097152
+# Max byte limit bypass
+message.max.bytes=20971520
+replica.fetch.max.bytes=20971520
 ```
 
 아래에 append
 
 ```c
-// ~/kafka_2.13-4.2.0/config/producer.properties
 # Maximum size of a request in bytes.
 # Should accommodate your largest batch size plus overhead.
 # 1MB is default and suitable for most cases.
-max.request.size=1048576정
+max.request.size=1048576
 
-max.request.size=2097152
+max.request.size=20971520
 ```
 
-아래 처럼 수정
-
 ```c
-// ~/kafka_2.13-4.2.0/config/consumer.properties
 # Set soft limits to the amount of bytes per fetch request and partition.
 # Both max.partition.fetch.bytes and fetch.max.bytes limits can be exceeded when
 # the first batch in the first non-empty partition is larger than the configured
@@ -81,12 +76,25 @@ max.request.size=2097152
 fetch.max.bytes=52428800
 max.partition.fetch.bytes=1048576
 
-max.partition.fetch.bytes=2097152
+max.partition.fetch.bytes=20971520
 ```
 
-아래 처럼 수정
+### Server.properties
 
-다음과 같이 바꾸어야 1MB 로드도 성공적으로 처리할 수 있다.
+```nasm
+# Max bytes
+message.max.bytes=20971520
+```
+
+아래에 append
+
+producer.c, consumer.c 코드 내부와 Topic 생성 parameter에도 20MB 설정을 적용.
+
+설정 여부는 describe명령어와 kafka log를 분석하여 볼 수 있다.
+
+배치의 영향인지는 몰라도 1MB를 보내기 위해서 의외로 2MB로는 계속해서 오류가 났다.
+
+따라서 20MB로 일괄적으로 적용해 주었다.
 
 ### Kafka storage format
 
@@ -279,7 +287,7 @@ MAX_BPS=122880000      # 120 MB/s
 
 → payload에 따라 자동으로 MPS 변환
 
----
+" 실험 보고서 작성일 기준으로는 90MB/s ~ 150MB/s, 10MB/s increment로 적용하였다.
 
 ## 4. Saturation 판단 기준
 
