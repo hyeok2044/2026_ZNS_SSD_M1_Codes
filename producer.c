@@ -136,6 +136,13 @@ static rd_kafka_t *create_producer(const producer_options_t *options,
   conf = rd_kafka_conf_new();
 
   set_config(conf, "bootstrap.servers", (char *)options->bootstrap_servers);
+
+  // Add Max Limit
+  rd_kafka_conf_set(
+      conf, "message.max.bytes", "2097152", errstr, sizeof(errstr));
+  rd_kafka_conf_set(
+      conf, "max.request.size", "2097152", errstr, sizeof(errstr));
+
   set_config(conf, "acks", (char *)options->acks);
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
   rd_kafka_conf_set_opaque(conf, runtime);

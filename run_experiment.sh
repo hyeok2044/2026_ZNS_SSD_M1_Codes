@@ -119,7 +119,8 @@ for PAYLOAD in 1024 10240 102400 512000; do
         --create \
         --topic "$TOPIC" \
         --partitions 8 \
-        --replication-factor 1
+        --replication-factor 1 \
+        --config max.message.bytes=2097152
 
     echo "  - waiting for topic stabilization..."
     sleep 10
