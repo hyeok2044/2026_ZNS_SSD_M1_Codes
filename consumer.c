@@ -36,12 +36,12 @@ int main(int argc, char **argv)
 
   // Add Max Limit
   rd_kafka_conf_set(
-      conf, "fetch.message.max.bytes", "2097152", errstr, sizeof(errstr));
+      conf, "fetch.message.max.bytes", "20971520", errstr, sizeof(errstr));
   rd_kafka_conf_set(
-      conf, "max.partition.fetch.bytes", "2097152", errstr, sizeof(errstr));
+      conf, "max.partition.fetch.bytes", "20971520", errstr, sizeof(errstr));
 
   rd_kafka_conf_set(
-      conf, "fetch.max.bytes", "52428800", errstr, sizeof(errstr));
+      conf, "fetch.max.bytes", "524288000", errstr, sizeof(errstr));
 
   // Fixed properties
   set_config(conf, "group.id", (char *)options.group_id);
