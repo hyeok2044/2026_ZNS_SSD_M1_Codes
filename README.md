@@ -2,6 +2,8 @@
 
 ## 이동혁(2021086917), 최현준(2021037401)
 
+---
+
 ## Kafka 설치 및 준비
 
 ### Java 설치
@@ -12,7 +14,13 @@ sudo apt install openjdk-17-jdk -y
 java -version
 ```
 
-Kafka는 `4.2.0` 버전을 사용한다.
+Kafka 버전:
+
+```bash
+kafka_2.13-4.2.0
+```
+
+설치:
 
 ```bash
 scp -r .\kafka_2.13-4.2.0.tgz h@192.168.0.23:~/
@@ -20,6 +28,8 @@ scp -r .\kafka_2.13-4.2.0.tgz h@192.168.0.23:~/
 tar -zxvf kafka_2.13-4.2.0.tgz
 cd ~/kafka_2.13-4.2.0
 ```
+
+---
 
 ### Kafka log directory 준비
 
@@ -31,13 +41,15 @@ sudo mkdir -p /mnt/f2fs/kafka-logs
 sudo chown -R $USER:$USER /mnt/f2fs/kafka-logs
 ```
 
+---
+
 ### Kafka 설정
 
 ```bash
 vi ~/kafka_2.13-4.2.0/config/server.properties
 ```
 
-필수 설정:
+기본 설정:
 
 ```properties
 num.partitions=8
@@ -45,56 +57,19 @@ offsets.topic.replication.factor=1
 log.dirs=/mnt/ext4/kafka-logs
 ```
 
-`log.dirs`는 실험 대상 파일 시스템에 맞춰 매번 변경된다.
+---
 
-### 추가: Broker 메시지 제한 관련
+### 메시지 크기 관련 설정
 
-```c
-# Max byte limit bypass
+```properties
 message.max.bytes=20971520
 replica.fetch.max.bytes=20971520
-```
-
-아래에 append
-
-```c
-# Maximum size of a request in bytes.
-# Should accommodate your largest batch size plus overhead.
-# 1MB is default and suitable for most cases.
-max.request.size=1048576
-
 max.request.size=20971520
-```
-
-```c
-# Set soft limits to the amount of bytes per fetch request and partition.
-# Both max.partition.fetch.bytes and fetch.max.bytes limits can be exceeded when
-# the first batch in the first non-empty partition is larger than the configured
-# value to ensure that the consumer can make progress.
-# Configuring message.max.bytes (broker config) or max.message.bytes (topic config)
-# <= fetch.max.bytes prevents oversized fetch responses.
 fetch.max.bytes=52428800
-max.partition.fetch.bytes=1048576
-
 max.partition.fetch.bytes=20971520
 ```
 
-### Server.properties
-
-```nasm
-# Max bytes
-message.max.bytes=20971520
-```
-
-아래에 append
-
-producer.c, consumer.c 코드 내부와 Topic 생성 parameter에도 20MB 설정을 적용.
-
-설정 여부는 describe명령어와 kafka log를 분석하여 볼 수 있다.
-
-배치의 영향인지는 몰라도 1MB를 보내기 위해서 의외로 2MB로는 계속해서 오류가 났다.
-
-따라서 20MB로 일괄적으로 적용해 주었다.
+---
 
 ### Kafka storage format
 
@@ -111,7 +86,7 @@ KAFKA_CLUSTER_ID="$(bin/kafka-storage.sh random-uuid)"
 
 ## 부하 생성기 빌드
 
-### rdkafka / glib 설치
+### 의존성 설치
 
 ```bash
 sudo apt install librdkafka-dev pkg-config libglib2.0-dev build-essential -y
@@ -133,10 +108,9 @@ make
 
 ---
 
-## Run
+## 실행
 
 ```bash
-# optional: iostat 대상 device 지정
 IOSTAT_DEV=nvme0n1 ./run_all.sh
 ```
 
@@ -144,188 +118,147 @@ IOSTAT_DEV=nvme0n1 ./run_all.sh
 
 # 📌 Experiment Methodology
 
-## 1. 전체 실험 구조
+## 실험 구성
 
-본 실험은 Kafka 기반에서 파일 시스템(ext4, f2fs)의 성능을 비교하기 위해 다음과 같은 구조로 수행된다.
-
-- File System: `ext4`, `f2fs`
-- Scenario:
-  - `producer_only`
-  - `producer_consumer`
-
-- Payload Size:
-  - 1024B, 10240B, 102400B, 1024000B
-
-- Throughput Control:
-  - BPS → MPS 변환 기반 linear ramp-up
-
----
-
-## 2. 실험 단계
-
-각 payload에 대해 아래 단계를 반복 수행한다.
-
-### (1) Kafka 초기화
-
-- 기존 topic 삭제 후 재생성
-- log.dirs를 대상 파일 시스템으로 설정
-- Kafka storage format 수행
-- clean state 보장
-
----
-
-### (2) 시스템 메트릭 수집 시작
-
-다음 시스템 지표를 수집한다:
-
-- iostat
-- vmstat
-
+```text
+File System: ext4, f2fs
+Scenario: producer_only, producer_consumer
+Payload: 1KB ~ 1MB
 ```
+
+---
+
+## 실험 단계
+
+### Kafka 초기화
+
+```text
+- topic 삭제 후 재생성
+- log.dirs 변경
+- storage format
+```
+
+---
+
+### 메트릭 수집
+
+```bash
 iostat -dx 1 -y -t -o JSON
-vmstat 1
+vmstat 1 -t
 ```
 
 ---
 
-### (3) Consumer 실행 (optional)
+### Consumer 실행 (optional)
 
-`producer_consumer` 시나리오일 경우:
-
-- consumer를 먼저 실행
-- producer 시작 전에 안정화 대기 (3초)
+```text
+producer_consumer일 경우 선실행
+```
 
 ---
 
-### (4) Producer 실행 (핵심)
+### Producer 실행
 
-Producer는 다음 방식으로 부하를 생성한다:
-
-#### 🔹 Ramp-up 방식
-
-```
-target_mps = initial → max (linear 증가)
+```text
+target_mps = linear ramp-up
 ```
 
-각 step마다:
+Phase:
 
+```text
+Warmup → Measurement
 ```
-warmup phase → measurement phase
-```
-
-#### 🔹 Phase 정의
-
-- Warmup:
-  - cache, buffer 안정화
-  - 측정 제외
-
-- Measurement:
-  - 실제 throughput 측정
-  - JSONL로 결과 기록
 
 ---
 
-### (5) Producer 출력
+## Throughput 제어
 
-각 measurement phase마다 다음을 기록:
-
+```text
+MPS = BPS / payload_size
 ```
+
+예시:
+
+```bash
+INITIAL_BPS=${INITIAL_BPS:-92160000}   # 90 MB/s-ish
+INCR_BPS=${INCR_BPS:-10240000}           # 10 MBPS Increment
+MAX_BPS=${MAX_BPS:-153600000}          # 150 MB/s-ish
+```
+
+---
+
+# 결과 분석
+
+## 디렉토리 구조
+
+```text
+results/
+  ext4/
+    producer_consumer/
+      timestamp/
+        payload/
+  f2fs/
+    producer_only/
+```
+
+---
+
+## Producer.jsonl
+
+```json
 {
-  "timestamp_us": ...,
-  "payload_size": ...,
-  "target_mps": ...,
-  "actual_mps": ...,
-  "sent_count": ...,
-  "acked_count": ...,
-  "duration_sec": ...,
+  "timestamp_us": 1714123456789,
+  "scenario": "producer_consumer",
+  "payload_size": 10240,
+  "target_mps": 1000,
+  "actual_mps": 980.5,
+  "latency_avg_us": 2100,
+  "latency_p50_us": 1800,
+  "latency_p90_us": 3500,
+  "latency_p99_us": 9000,
+  "sent_count": 30000,
+  "acked_count": 29415,
+  "duration_sec": 30,
   "state": "measurement"
 }
 ```
 
 ---
 
-### (6) Consumer 출력
+## Consumer.jsonl
 
-Consumer는 ramp-up에 관여하지 않고, 다음을 지속적으로 기록:
-
-```
+```json
 {
-  "timestamp_us": ...,
-  "payload_size": ...,
-  "consume_mps": ...,
-  "consumed_count": ...,
+  "timestamp_us": 1777271047670577,
+  "payload_size": 10240,
+  "consume_mps": 10000.12,
+  "consumed_count": 10042,
   "state": "running"
 }
 ```
 
 ---
 
-### (7) 종료 및 정리
+## vmstat
 
-- Producer 종료 후 grace period
-- Consumer 종료
-- iostat / vmstat 종료
-- 다음 payload로 이동
-
----
-
-## 3. Throughput 제어 방식
-
-실험은 MPS가 아닌 **BPS 기반으로 정의**된다.
-
-```
-MPS = BPS / payload_size
-```
-
-예시:
-
-```
-INITIAL_BPS=71680000   # 70 MB/s
-INCR_BPS=5120000       # 5 MB/s
-MAX_BPS=122880000      # 120 MB/s
-```
-
-→ payload에 따라 자동으로 MPS 변환
-
-" 실험 보고서 작성일 기준으로는 90MB/s ~ 150MB/s, 10MB/s increment로 적용하였다.
-
-## 4. Saturation 판단 기준
-
-다음 조건 중 하나를 만족하면 saturation으로 간주:
-
-- actual_mps < target_mps \* 0.95
-- I/O wait 증가 (vmstat wa 상승)
-- disk util ≈ 100% (iostat)
-- write latency 증가 (await 증가)
-
----
-
-## 5. 결과 저장 구조
-
-```
-results/
-  ext4/
-    producer_only/
-      timestamp/
-        payload/
-  f2fs/
-    producer_consumer/
-      timestamp/
-        payload/
+```text
+1777269637  3  0  256 1205628 94516 4877768 0 0 171 21981 1513 5 8 2 81 9 0 0
 ```
 
 ---
 
-## 6. 핵심 설계 원칙
+## iostat
 
-- 모든 실험은 clean state에서 시작
-- throughput은 BPS 기준으로 통일
-- producer는 load generator
-- consumer는 observer
-- JSONL 기반 결과 저장
-
----
-
-# 한 줄 요약
-
-→ Producer가 linear ramp-up으로 부하를 증가시키고, Consumer 및 시스템 지표를 통해 saturation 지점을 관측하는 실험 구조
+```json
+{
+  "timestamp": "04/27/2026 06:10:22 AM",
+  "disk": [
+    {
+      "disk_device": "nvme0n1",
+      "w/s": 672.00,
+      "wkB/s": 82156.00,
+      "util": 99.00
+    }
+  ]
+}
+```
